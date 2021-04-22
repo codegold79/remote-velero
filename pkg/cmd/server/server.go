@@ -400,7 +400,7 @@ func (s *server) run() error {
 	}
 
 	if s.srcClusterHost != "" {
-		s.logger.Infof("Server is using source kubectx of %s.", s.srcClusterHost)
+		s.logger.Infof("Server is using source cluster at %s.", s.srcClusterHost)
 	} else {
 		s.logger.Infof("Server is using current kubectx for source.")
 	}
@@ -408,7 +408,7 @@ func (s *server) run() error {
 	s.logger.Infof("Server is using namespace %s.", s.namespace)
 
 	if s.destClusterHost != "" {
-		s.logger.Infof("Server is using destination kubectx of %s.", s.destClusterHost)
+		s.logger.Infof("Server is using destination cluster at %s.", s.destClusterHost)
 	} else {
 		s.logger.Infof("Server is using current kubectx for destination.")
 	}
