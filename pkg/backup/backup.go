@@ -62,6 +62,7 @@ type Backupper interface {
 	// Backup takes a backup using the specification in the velerov1api.Backup and writes backup and log data
 	// to the given writers.
 	Backup(logger logrus.FieldLogger, backup *Request, backupFile io.Writer, actions []velero.BackupItemAction, volumeSnapshotterGetter VolumeSnapshotterGetter) error
+	SrcClusterHost() string
 }
 
 // kubernetesBackupper implements Backupper.
@@ -73,6 +74,7 @@ type kubernetesBackupper struct {
 	resticBackupperFactory restic.BackupperFactory
 	resticTimeout          time.Duration
 	defaultVolumesToRestic bool
+	srcClusterHost         string
 }
 
 type resolvedAction struct {
@@ -106,6 +108,7 @@ func NewKubernetesBackupper(
 	resticBackupperFactory restic.BackupperFactory,
 	resticTimeout time.Duration,
 	defaultVolumesToRestic bool,
+	srcClusterHost string,
 ) (Backupper, error) {
 	return &kubernetesBackupper{
 		backupClient:           backupClient,
@@ -115,6 +118,7 @@ func NewKubernetesBackupper(
 		resticBackupperFactory: resticBackupperFactory,
 		resticTimeout:          resticTimeout,
 		defaultVolumesToRestic: defaultVolumesToRestic,
+		srcClusterHost:         srcClusterHost,
 	}, nil
 }
 
@@ -212,6 +216,12 @@ func (kb *kubernetesBackupper) Backup(log logrus.FieldLogger, backupRequest *Req
 	log.Info("Writing backup version file")
 	if err := kb.writeBackupVersion(tw); err != nil {
 		return errors.WithStack(err)
+	}
+
+	if kb.SrcClusterHost() != "" {
+		log.Info("Using source cluster at %s", kb.srcClusterHost)
+	} else {
+		log.Info("Using local cluster for source")
 	}
 
 	backupRequest.NamespaceIncludesExcludes = getNamespaceIncludesExcludes(backupRequest.Backup)
@@ -496,6 +506,10 @@ func (kb *kubernetesBackupper) writeBackupVersion(tw *tar.Writer) error {
 		return errors.WithStack(err)
 	}
 	return nil
+}
+
+func (kb *kubernetesBackupper) SrcClusterHost() string {
+	return kb.srcClusterHost
 }
 
 type tarWriter interface {

@@ -172,6 +172,7 @@ func NewCommand(f client.Factory) *cobra.Command {
 			logger.Infof("setting log-level to %s", strings.ToUpper(logLevel.String()))
 
 			logger.Infof("Starting Velero server %s (%s)", buildinfo.Version, buildinfo.FormattedGitSHA())
+
 			if len(features.All()) > 0 {
 				logger.Infof("%d feature flags enabled %s", len(features.All()), features.All())
 			} else {
@@ -215,14 +216,30 @@ func NewCommand(f client.Factory) *cobra.Command {
 }
 
 type server struct {
-	namespace                           string
-	metricsAddress                      string
-	kubeClientConfig                    *rest.Config
-	kubeClient                          kubernetes.Interface
-	veleroClient                        clientset.Interface
-	discoveryClient                     discovery.DiscoveryInterface
-	discoveryHelper                     velerodiscovery.Helper
-	dynamicClient                       dynamic.Interface
+	namespace        string
+	metricsAddress   string
+	kubeClientConfig *rest.Config
+	kubeClient       kubernetes.Interface
+	veleroClient     clientset.Interface
+	discoveryClient  discovery.DiscoveryInterface
+	dynamicClient    dynamic.Interface
+	discoveryHelper  velerodiscovery.Helper
+
+	srcClusterHost       string
+	destClusterHost      string
+	srcDiscoveryHelper   velerodiscovery.Helper
+	destDiscoveryHelper  velerodiscovery.Helper
+	srcKubeClientConfig  *rest.Config
+	destKubeClientConfig *rest.Config
+	srcKubeClient        kubernetes.Interface
+	destKubeClient       kubernetes.Interface
+	srcVeleroClient      clientset.Interface
+	descVeleroClient     clientset.Interface
+	srcDiscoveryClient   discovery.DiscoveryInterface
+	destDiscoveryClient  discovery.DiscoveryInterface
+	srcDynamicClient     dynamic.Interface
+	destDynamicClient    dynamic.Interface
+
 	sharedInformerFactory               informers.SharedInformerFactory
 	csiSnapshotterSharedInformerFactory *CSIInformerFactoryWrapper
 	csiSnapshotClient                   *snapshotv1beta1client.Clientset
@@ -254,12 +271,42 @@ func newServer(f client.Factory, config serverConfig, logger *logrus.Logger) (*s
 		return nil, err
 	}
 
+	srcKubeClient, err := f.SourceKubeClient()
+	if err != nil {
+		return nil, err
+	}
+
+	destKubeClient, err := f.DestinationKubeClient()
+	if err != nil {
+		return nil, err
+	}
+
 	veleroClient, err := f.Client()
 	if err != nil {
 		return nil, err
 	}
 
+	srcVeleroClient, err := f.SourceClient()
+	if err != nil {
+		return nil, err
+	}
+
+	destVeleroClient, err := f.DestinationClient()
+	if err != nil {
+		return nil, err
+	}
+
 	dynamicClient, err := f.DynamicClient()
+	if err != nil {
+		return nil, err
+	}
+
+	srcDynamicClient, err := f.SourceDynamicClient()
+	if err != nil {
+		return nil, err
+	}
+
+	destDynamicClient, err := f.DestinationDynamicClient()
 	if err != nil {
 		return nil, err
 	}
@@ -321,6 +368,14 @@ func newServer(f client.Factory, config serverConfig, logger *logrus.Logger) (*s
 		veleroClient:                        veleroClient,
 		discoveryClient:                     veleroClient.Discovery(),
 		dynamicClient:                       dynamicClient,
+		srcKubeClient:                       srcKubeClient,
+		destKubeClient:                      destKubeClient,
+		srcDiscoveryClient:                  srcVeleroClient.Discovery(),
+		destDiscoveryClient:                 destVeleroClient.Discovery(),
+		srcDynamicClient:                    srcDynamicClient,
+		destDynamicClient:                   destDynamicClient,
+		srcClusterHost:                      f.SrcClusterHost(),
+		destClusterHost:                     f.DestClusterHost(),
 		sharedInformerFactory:               informers.NewSharedInformerFactoryWithOptions(veleroClient, 0, informers.WithNamespace(f.Namespace())),
 		csiSnapshotterSharedInformerFactory: NewCSIInformerFactoryWrapper(csiSnapClient),
 		csiSnapshotClient:                   csiSnapClient,
@@ -342,6 +397,20 @@ func (s *server) run() error {
 
 	if s.config.profilerAddress != "" {
 		go s.runProfiler()
+	}
+
+	if s.srcClusterHost != "" {
+		s.logger.Infof("Server is using source kubectx of %s.", s.srcClusterHost)
+	} else {
+		s.logger.Infof("Server is using current kubectx for source.")
+	}
+
+	s.logger.Infof("Server is using namespace %s.", s.namespace)
+
+	if s.destClusterHost != "" {
+		s.logger.Infof("Server is using destination kubectx of %s.", s.destClusterHost)
+	} else {
+		s.logger.Infof("Server is using current kubectx for destination.")
 	}
 
 	// Since s.namespace, which specifies where backups/restores/schedules/etc. should live,
@@ -380,6 +449,7 @@ func (s *server) namespaceExists(namespace string) error {
 	}
 
 	s.logger.WithField("namespace", namespace).Info("Namespace exists")
+
 	return nil
 }
 
@@ -392,10 +462,42 @@ func (s *server) initDiscoveryHelper() error {
 	}
 	s.discoveryHelper = discoveryHelper
 
+	srcDiscoveryHelper, err := velerodiscovery.NewHelper(s.srcDiscoveryClient, s.logger)
+	if err != nil {
+		return err
+	}
+	s.srcDiscoveryHelper = srcDiscoveryHelper
+
+	destDiscoveryHelper, err := velerodiscovery.NewHelper(s.destDiscoveryClient, s.logger)
+	if err != nil {
+		return err
+	}
+	s.destDiscoveryHelper = destDiscoveryHelper
+
 	go wait.Until(
 		func() {
 			if err := discoveryHelper.Refresh(); err != nil {
 				s.logger.WithError(err).Error("Error refreshing discovery")
+			}
+		},
+		5*time.Minute,
+		s.ctx.Done(),
+	)
+
+	go wait.Until(
+		func() {
+			if err := srcDiscoveryHelper.Refresh(); err != nil {
+				s.logger.WithError(err).Error("Error refreshing source discovery")
+			}
+		},
+		5*time.Minute,
+		s.ctx.Done(),
+	)
+
+	go wait.Until(
+		func() {
+			if err := destDiscoveryHelper.Refresh(); err != nil {
+				s.logger.WithError(err).Error("Error refreshing destination discovery")
 			}
 		},
 		5*time.Minute,
@@ -604,19 +706,20 @@ func (s *server) runControllers(defaultVolumeSnapshotLocations map[string]string
 	backupControllerRunInfo := func() controllerRunInfo {
 		backupper, err := backup.NewKubernetesBackupper(
 			s.veleroClient.VeleroV1(),
-			s.discoveryHelper,
-			client.NewDynamicFactory(s.dynamicClient),
-			podexec.NewPodCommandExecutor(s.kubeClientConfig, s.kubeClient.CoreV1().RESTClient()),
+			s.srcDiscoveryHelper,
+			client.NewDynamicFactory(s.srcDynamicClient),
+			podexec.NewPodCommandExecutor(s.srcKubeClientConfig, s.srcKubeClient.CoreV1().RESTClient()),
 			s.resticManager,
 			s.config.podVolumeOperationTimeout,
 			s.config.defaultVolumesToRestic,
+			s.srcClusterHost,
 		)
 		cmd.CheckError(err)
 
 		backupController := controller.NewBackupController(
 			s.sharedInformerFactory.Velero().V1().Backups(),
 			s.veleroClient.VeleroV1(),
-			s.discoveryHelper,
+			s.srcDiscoveryHelper,
 			backupper,
 			s.logger,
 			s.logLevel,
@@ -703,16 +806,17 @@ func (s *server) runControllers(defaultVolumeSnapshotLocations map[string]string
 	restoreControllerRunInfo := func() controllerRunInfo {
 		restorer, err := restore.NewKubernetesRestorer(
 			s.veleroClient.VeleroV1(),
-			s.discoveryHelper,
-			client.NewDynamicFactory(s.dynamicClient),
+			s.destDiscoveryHelper,
+			client.NewDynamicFactory(s.destDynamicClient),
 			s.config.restoreResourcePriorities,
-			s.kubeClient.CoreV1().Namespaces(),
+			s.destKubeClient.CoreV1().Namespaces(),
 			s.resticManager,
 			s.config.podVolumeOperationTimeout,
 			s.config.resourceTerminatingTimeout,
 			s.logger,
-			podexec.NewPodCommandExecutor(s.kubeClientConfig, s.kubeClient.CoreV1().RESTClient()),
-			s.kubeClient.CoreV1().RESTClient(),
+			podexec.NewPodCommandExecutor(s.destKubeClientConfig, s.destKubeClient.CoreV1().RESTClient()),
+			s.destKubeClient.CoreV1().RESTClient(),
+			s.destClusterHost,
 		)
 		cmd.CheckError(err)
 
