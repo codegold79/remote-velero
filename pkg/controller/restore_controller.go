@@ -462,7 +462,7 @@ func (c *restoreController) runValidatedRestore(restore *api.Restore, info backu
 		return errors.Wrap(err, "error fetching volume snapshots metadata")
 	}
 
-	restoreLog.Info("starting restore")
+	restoreLog.Infof("Starting restore on destination cluster at %s", c.restorer.DestClusterHost())
 
 	var podVolumeBackups []*velerov1api.PodVolumeBackup
 	for i := range podVolumeBackupList.Items {

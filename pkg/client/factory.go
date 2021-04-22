@@ -17,12 +17,14 @@ limitations under the License.
 package client
 
 import (
+	"context"
 	"os"
 
 	kbclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -32,22 +34,45 @@ import (
 	clientset "github.com/vmware-tanzu/velero/pkg/generated/clientset/versioned"
 )
 
+const (
+	srcClusterSecretName  = "srccluster"
+	destClusterSecretName = "destcluster"
+)
+
 // Factory knows how to create a VeleroClient and Kubernetes client.
 type Factory interface {
 	// BindFlags binds common flags (--kubeconfig, --namespace) to the passed-in FlagSet.
 	BindFlags(flags *pflag.FlagSet)
+
 	// Client returns a VeleroClient. It uses the following priority to specify the cluster
 	// configuration: --kubeconfig flag, KUBECONFIG environment variable, in-cluster configuration.
 	Client() (clientset.Interface, error)
+	// SourceClient returns a VeleroClient. The client uses the config returned by
+	// the SourceClientConfig() method.
+	SourceClient() (clientset.Interface, error)
+	// DestinationClient returns a VeleroClient. The client uses the config returned by
+	// the DestinationClient() method.
+	DestinationClient() (clientset.Interface, error)
 	// KubeClient returns a Kubernetes client. It uses the following priority to specify the cluster
 	// configuration: --kubeconfig flag, KUBECONFIG environment variable, in-cluster configuration.
 	KubeClient() (kubernetes.Interface, error)
+	// SourceKubeClient returns a Kubernetes client. It uses information in a
+	// user-provided secret to connect to and gain access to a remote cluster.
+	SourceKubeClient() (kubernetes.Interface, error)
+	// DestinationKubeClient returns a Kubernetes client. It uses information
+	// in a user-provided secret to connect to and gain access to a remote cluster.
+	DestinationKubeClient() (kubernetes.Interface, error)
 	// DynamicClient returns a Kubernetes dynamic client. It uses the following priority to specify the cluster
 	// configuration: --kubeconfig flag, KUBECONFIG environment variable, in-cluster configuration.
 	DynamicClient() (dynamic.Interface, error)
+	// SourceDynamicClient returns a Kubernetes dynamic client.
+	SourceDynamicClient() (dynamic.Interface, error)
+	// DestinationDynamicClient returns a Kubernetes dynamic client.
+	DestinationDynamicClient() (dynamic.Interface, error)
 	// KubebuilderClient returns a Kubernetes dynamic client. It uses the following priority to specify the cluster
 	// configuration: --kubeconfig flag, KUBECONFIG environment variable, in-cluster configuration.
 	KubebuilderClient() (kbclient.Client, error)
+
 	// SetBasename changes the basename for an already-constructed client.
 	// This is useful for generating clients that require a different user-agent string below the root `velero`
 	// command, such as the server subcommand.
@@ -56,20 +81,33 @@ type Factory interface {
 	SetClientQPS(float32)
 	// SetClientBurst sets the Burst for a client.
 	SetClientBurst(int)
+
 	// ClientConfig returns a rest.Config struct used for client-go clients.
 	ClientConfig() (*rest.Config, error)
+	// SourceClientConfig returns a rest.Config struct used for client-go clients.
+	SourceClientConfig() (*rest.Config, error)
+	// DestinationClientConfig returns a rest.Config struct used for client-go clients.
+	DestinationClientConfig() (*rest.Config, error)
+
+	// SrcClusterHost returns the URL of the remote cluster that will be back up.
+	SrcClusterHost() string
+	// DestClusterHost returns the URL of the remote cluster to restore to.
+	DestClusterHost() string
+
 	// Namespace returns the namespace which the Factory will create clients for.
 	Namespace() string
 }
 
 type factory struct {
-	flags       *pflag.FlagSet
-	kubeconfig  string
-	kubecontext string
-	baseName    string
-	namespace   string
-	clientQPS   float32
-	clientBurst int
+	flags           *pflag.FlagSet
+	kubeconfig      string
+	kubecontext     string
+	srcClusterHost  string
+	destClusterHost string
+	baseName        string
+	namespace       string
+	clientQPS       float32
+	clientBurst     int
 }
 
 // NewFactory returns a Factory.
@@ -105,8 +143,95 @@ func (f *factory) ClientConfig() (*rest.Config, error) {
 	return Config(f.kubeconfig, f.kubecontext, f.baseName, f.clientQPS, f.clientBurst)
 }
 
+type serviceAcctCreds struct {
+	host                         string
+	saNamespace, saName, saToken string
+}
+
+// SourceClientConfig will return return a rest config built using the
+// credentials information in a user-provided secret.
+func (f *factory) SourceClientConfig() (*rest.Config, error) {
+	srcCreds, err := f.serviceAcctCredsFromSecret(
+		srcClusterSecretName,
+		velerov1api.DefaultNamespace,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if (srcCreds != serviceAcctCreds{}) {
+		f.srcClusterHost = srcCreds.host
+
+		return &rest.Config{
+			Host:            srcCreds.host,
+			BearerToken:     srcCreds.saToken,
+			TLSClientConfig: rest.TLSClientConfig{Insecure: true},
+			Burst:           1000,
+			QPS:             100,
+		}, nil
+	}
+
+	// No service account credentials were found for source cluster in secret.
+	// Use local cluster kubecontext.
+	return Config(f.kubeconfig, f.kubecontext, f.baseName, f.clientQPS, f.clientBurst)
+}
+
+// DestinationClientConfig will return return a rest config built using the
+// credentials information in a user-provided secret.
+func (f *factory) DestinationClientConfig() (*rest.Config, error) {
+	destCreds, err := f.serviceAcctCredsFromSecret(
+		destClusterSecretName,
+		velerov1api.DefaultNamespace,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if (destCreds != serviceAcctCreds{}) {
+		f.destClusterHost = destCreds.host
+
+		return &rest.Config{
+			Host:            destCreds.host,
+			BearerToken:     destCreds.saToken,
+			TLSClientConfig: rest.TLSClientConfig{Insecure: true},
+			Burst:           1000,
+			QPS:             100,
+		}, nil
+	}
+
+	// No service account credentials were found for source cluster in secret.
+	// Use local cluster kubecontext.
+	return Config(f.kubeconfig, f.kubecontext, f.baseName, f.clientQPS, f.clientBurst)
+}
+
 func (f *factory) Client() (clientset.Interface, error) {
 	clientConfig, err := f.ClientConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	veleroClient, err := clientset.NewForConfig(clientConfig)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return veleroClient, nil
+}
+
+func (f *factory) SourceClient() (clientset.Interface, error) {
+	clientConfig, err := f.SourceClientConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	veleroClient, err := clientset.NewForConfig(clientConfig)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return veleroClient, nil
+}
+
+func (f *factory) DestinationClient() (clientset.Interface, error) {
+	clientConfig, err := f.DestinationClientConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -131,8 +256,58 @@ func (f *factory) KubeClient() (kubernetes.Interface, error) {
 	return kubeClient, nil
 }
 
+func (f *factory) SourceKubeClient() (kubernetes.Interface, error) {
+	clientConfig, err := f.SourceClientConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	kubeClient, err := kubernetes.NewForConfig(clientConfig)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return kubeClient, nil
+}
+
+func (f *factory) DestinationKubeClient() (kubernetes.Interface, error) {
+	clientConfig, err := f.DestinationClientConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	kubeClient, err := kubernetes.NewForConfig(clientConfig)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return kubeClient, nil
+}
+
 func (f *factory) DynamicClient() (dynamic.Interface, error) {
 	clientConfig, err := f.ClientConfig()
+	if err != nil {
+		return nil, err
+	}
+	dynamicClient, err := dynamic.NewForConfig(clientConfig)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return dynamicClient, nil
+}
+
+func (f *factory) SourceDynamicClient() (dynamic.Interface, error) {
+	clientConfig, err := f.SourceClientConfig()
+	if err != nil {
+		return nil, err
+	}
+	dynamicClient, err := dynamic.NewForConfig(clientConfig)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return dynamicClient, nil
+}
+
+func (f *factory) DestinationDynamicClient() (dynamic.Interface, error) {
+	clientConfig, err := f.DestinationClientConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -176,4 +351,42 @@ func (f *factory) SetClientBurst(burst int) {
 
 func (f *factory) Namespace() string {
 	return f.namespace
+}
+
+func (f *factory) SrcClusterHost() string {
+	return f.srcClusterHost
+}
+
+func (f *factory) DestClusterHost() string {
+	return f.destClusterHost
+}
+
+// serviceAccountCredsFromSecret looks for service account credentials from a secret
+// identified by the secret's name and namespace.
+func (f *factory) serviceAcctCredsFromSecret(secretName, secretNS string) (serviceAcctCreds, error) {
+	client, err := f.KubeClient()
+	if err != nil {
+		return serviceAcctCreds{}, err
+	}
+
+	secrets, err := client.CoreV1().Secrets(secretNS).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return serviceAcctCreds{}, err
+	}
+
+	var saCreds serviceAcctCreds
+	for _, item := range secrets.Items {
+		if item.Name == secretName {
+			saCreds = serviceAcctCreds{
+				host:        string(item.Data["host"]),
+				saNamespace: string(item.Data["sa-namespace"]),
+				saName:      string(item.Data["sa-name"]),
+				saToken:     string(item.Data["sa-token"]),
+			}
+			return saCreds, nil
+		}
+	}
+
+	// No service account credentials for remote cluster found in secret.
+	return serviceAcctCreds{}, nil
 }

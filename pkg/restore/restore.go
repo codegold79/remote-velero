@@ -96,6 +96,7 @@ type Restorer interface {
 		snapshotLocationLister listers.VolumeSnapshotLocationLister,
 		volumeSnapshotterGetter VolumeSnapshotterGetter,
 	) (Result, Result)
+	DestClusterHost() string
 }
 
 // kubernetesRestorer implements Restorer for restoring into a Kubernetes cluster.
@@ -113,6 +114,7 @@ type kubernetesRestorer struct {
 	logger                     logrus.FieldLogger
 	podCommandExecutor         podexec.PodCommandExecutor
 	podGetter                  cache.Getter
+	destClusterHost            string
 }
 
 // NewKubernetesRestorer creates a new kubernetesRestorer.
@@ -128,6 +130,7 @@ func NewKubernetesRestorer(
 	logger logrus.FieldLogger,
 	podCommandExecutor podexec.PodCommandExecutor,
 	podGetter cache.Getter,
+	destKubeContext string,
 ) (Restorer, error) {
 	return &kubernetesRestorer{
 		restoreClient:              restoreClient,
@@ -150,6 +153,7 @@ func NewKubernetesRestorer(
 		fileSystem:         filesystem.NewFileSystem(),
 		podCommandExecutor: podCommandExecutor,
 		podGetter:          podGetter,
+		destClusterHost:    destKubeContext,
 	}, nil
 }
 
@@ -174,6 +178,12 @@ func (kr *kubernetesRestorer) Restore(
 	selector, err := metav1.LabelSelectorAsSelector(ls)
 	if err != nil {
 		return Result{}, Result{Velero: []string{err.Error()}}
+	}
+
+	if kr.destClusterHost != "" {
+		kr.logger.Info("Using destination cluster at %s", kr.destClusterHost)
+	} else {
+		kr.logger.Info("Using local cluster to restore onto")
 	}
 
 	// Get resource includes-excludes.
@@ -275,6 +285,10 @@ func (kr *kubernetesRestorer) Restore(
 	}
 
 	return restoreCtx.execute()
+}
+
+func (kr *kubernetesRestorer) DestClusterHost() string {
+	return kr.destClusterHost
 }
 
 type resolvedAction struct {

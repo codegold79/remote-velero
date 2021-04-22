@@ -266,6 +266,7 @@ func (c *backupController) processBackup(key string) error {
 	defer c.backupTracker.Delete(request.Namespace, request.Name)
 
 	log.Debug("Running backup")
+	log.Infof("Running backup on source cluster at %s", c.backupper.SrcClusterHost())
 
 	backupScheduleName := request.GetLabels()[velerov1api.ScheduleNameLabel]
 	c.metrics.RegisterBackupAttempt(backupScheduleName)
