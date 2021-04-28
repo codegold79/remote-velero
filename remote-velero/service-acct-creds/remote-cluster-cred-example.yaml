@@ -6,4 +6,4 @@ metadata:
 type: Opaque
 data:
   host: <base64 encoded host URL>
-  sa-token: <base64 encoded service account token here>
+  serviceaccount: <base64 encoded service account token here>

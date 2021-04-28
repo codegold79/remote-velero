@@ -404,7 +404,7 @@ func (f *factory) serviceAcctCredsFromSecret(secretName, secretNS string) (servi
 		if item.Name == secretName {
 			saCreds = serviceAcctCreds{
 				host:    string(item.Data["host"]),
-				saToken: string(item.Data["sa-token"]),
+				saToken: string(item.Data["serviceaccount"]),
 			}
 			return saCreds, nil
 		}
