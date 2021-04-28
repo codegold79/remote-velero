@@ -35,8 +35,9 @@ import (
 )
 
 const (
-	srcClusterSecretName  = "srccluster"
-	destClusterSecretName = "destcluster"
+	srcClusterSecretName    = "srccluster"
+	destClusterSecretName   = "destcluster"
+	remoteClusterSecretName = "remotecluster"
 )
 
 // Factory knows how to create a VeleroClient and Kubernetes client.
@@ -151,12 +152,24 @@ type serviceAcctCreds struct {
 // SourceClientConfig will return return a rest config built using the
 // credentials information in a user-provided secret.
 func (f *factory) SourceClientConfig() (*rest.Config, error) {
+	// First see if there are remote cluster service account credentials saved.
 	srcCreds, err := f.serviceAcctCredsFromSecret(
-		srcClusterSecretName,
-		velerov1api.DefaultNamespace,
+		remoteClusterSecretName,
+		f.namespace,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	// Try getting the source cluster service account creds next.
+	if (srcCreds == serviceAcctCreds{}) {
+		srcCreds, err = f.serviceAcctCredsFromSecret(
+			srcClusterSecretName,
+			f.namespace,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if (srcCreds != serviceAcctCreds{}) {
@@ -179,12 +192,24 @@ func (f *factory) SourceClientConfig() (*rest.Config, error) {
 // DestinationClientConfig will return return a rest config built using the
 // credentials information in a user-provided secret.
 func (f *factory) DestinationClientConfig() (*rest.Config, error) {
+	// First see if there are remote cluster service account credentials saved.
 	destCreds, err := f.serviceAcctCredsFromSecret(
-		destClusterSecretName,
-		velerov1api.DefaultNamespace,
+		remoteClusterSecretName,
+		f.namespace,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	// Try getting the destination cluster service account creds next.
+	if (destCreds == serviceAcctCreds{}) {
+		destCreds, err = f.serviceAcctCredsFromSecret(
+			destClusterSecretName,
+			f.namespace,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if (destCreds != serviceAcctCreds{}) {
