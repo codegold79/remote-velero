@@ -54,7 +54,7 @@ one for the source (backup) cluster, and the other for the destination (restore)
         * The secret for the remote source cluster must be named `srccluster`.
         * The secret for the remote destination cluster must be named `destcluster`.
         * Both secrets must be in the namespace that Velero was installed in.
-        * The data in each secret must contain the host URL associated with the `host` key, and the service account token for the `serviceaccount` key.
+        * The data in each secret must contain the host URL associated with the `host` key, and the service account token for the `sa-token` key.
         * See an example secret manifest for a remote source cluster in [remote-velero/service-acct-creds/src-cluster-cred-example.yaml](remote-velero/service-acct-creds/src-cluster-cred-example.yaml).
 
         ```yaml
@@ -65,8 +65,8 @@ one for the source (backup) cluster, and the other for the destination (restore)
         namespace: <namespace where Velero is installed>
         type: Opaque
         data:
-            host: <base64 encoded host URL>
-            serviceaccount: <base64 encoded service account token here>
+        host: <base64 encoded host URL>
+        sa-token: <base64 encoded service account token here>
         ```
 
 1. Install Remote Velero
@@ -137,7 +137,7 @@ Instructions are very similar to Option 1, one velero for two remote that build 
     **Note: Each namespace has a single secret named "remotecluster".**
 
     * The secret added to each namespace must be named `remotecluster`.
-    * The data in each secret must contain the host URL associated with the `host` key, and the service account token for the `serviceaccount` key.
+    * The data in each secret must contain the host URL associated with the `host` key, and the service account token for the `sa-token` key.
     * See an example secret manifest for a remote source cluster in [remote-velero/service-acct-creds/src-cluster-cred-example.yaml](remote-velero/service-acct-creds/remote-cluster-cred-example.yaml).
 
         ```yaml
@@ -148,8 +148,8 @@ Instructions are very similar to Option 1, one velero for two remote that build 
         namespace: <namespace where Velero is installed>
         type: Opaque
         data:
-            host: <base64 encoded host URL>
-            serviceaccount: <base64 encoded service account token here>
+        host: <base64 encoded host URL>
+        sa-token: <base64 encoded service account token here>
         ```
 
 1. Install Remote Velero in Every Namespace
