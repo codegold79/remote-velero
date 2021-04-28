@@ -35,8 +35,9 @@ import (
 )
 
 const (
-	srcClusterSecretName  = "srccluster"
-	destClusterSecretName = "destcluster"
+	srcClusterSecretName    = "srccluster"
+	destClusterSecretName   = "destcluster"
+	remoteClusterSecretName = "remotecluster"
 )
 
 // Factory knows how to create a VeleroClient and Kubernetes client.
@@ -144,19 +145,31 @@ func (f *factory) ClientConfig() (*rest.Config, error) {
 }
 
 type serviceAcctCreds struct {
-	host                         string
-	saNamespace, saName, saToken string
+	host    string
+	saToken string
 }
 
 // SourceClientConfig will return return a rest config built using the
 // credentials information in a user-provided secret.
 func (f *factory) SourceClientConfig() (*rest.Config, error) {
+	// First see if there are remote cluster service account credentials saved.
 	srcCreds, err := f.serviceAcctCredsFromSecret(
-		srcClusterSecretName,
-		velerov1api.DefaultNamespace,
+		remoteClusterSecretName,
+		f.namespace,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	// Try getting the source cluster service account creds next.
+	if (srcCreds == serviceAcctCreds{}) {
+		srcCreds, err = f.serviceAcctCredsFromSecret(
+			srcClusterSecretName,
+			f.namespace,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if (srcCreds != serviceAcctCreds{}) {
@@ -179,12 +192,24 @@ func (f *factory) SourceClientConfig() (*rest.Config, error) {
 // DestinationClientConfig will return return a rest config built using the
 // credentials information in a user-provided secret.
 func (f *factory) DestinationClientConfig() (*rest.Config, error) {
+	// First see if there are remote cluster service account credentials saved.
 	destCreds, err := f.serviceAcctCredsFromSecret(
-		destClusterSecretName,
-		velerov1api.DefaultNamespace,
+		remoteClusterSecretName,
+		f.namespace,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	// Try getting the destination cluster service account creds next.
+	if (destCreds == serviceAcctCreds{}) {
+		destCreds, err = f.serviceAcctCredsFromSecret(
+			destClusterSecretName,
+			f.namespace,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if (destCreds != serviceAcctCreds{}) {
@@ -378,10 +403,8 @@ func (f *factory) serviceAcctCredsFromSecret(secretName, secretNS string) (servi
 	for _, item := range secrets.Items {
 		if item.Name == secretName {
 			saCreds = serviceAcctCreds{
-				host:        string(item.Data["host"]),
-				saNamespace: string(item.Data["sa-namespace"]),
-				saName:      string(item.Data["sa-name"]),
-				saToken:     string(item.Data["sa-token"]),
+				host:    string(item.Data["host"]),
+				saToken: string(item.Data["sa-token"]),
 			}
 			return saCreds, nil
 		}

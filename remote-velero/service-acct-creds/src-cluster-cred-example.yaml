@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: srccluster
+  namespace: <namespace where Velero is installed>
+type: Opaque
+data:
+  host: <base64 encoded host URL>
+  sa-token: <base64 encoded service account token here>
