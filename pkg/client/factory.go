@@ -144,8 +144,8 @@ func (f *factory) ClientConfig() (*rest.Config, error) {
 }
 
 type serviceAcctCreds struct {
-	host                         string
-	saNamespace, saName, saToken string
+	host    string
+	saToken string
 }
 
 // SourceClientConfig will return return a rest config built using the
@@ -378,10 +378,8 @@ func (f *factory) serviceAcctCredsFromSecret(secretName, secretNS string) (servi
 	for _, item := range secrets.Items {
 		if item.Name == secretName {
 			saCreds = serviceAcctCreds{
-				host:        string(item.Data["host"]),
-				saNamespace: string(item.Data["sa-namespace"]),
-				saName:      string(item.Data["sa-name"]),
-				saToken:     string(item.Data["sa-token"]),
+				host:    string(item.Data["host"]),
+				saToken: string(item.Data["sa-token"]),
 			}
 			return saCreds, nil
 		}
