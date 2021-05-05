@@ -44,7 +44,7 @@ spec:
         emptyDir: {}
       containers:
       - name: minio
-        image: minio/minio:latest
+        image: harbor-repo.vmware.com/dockerhub-proxy-cache/minio/minio:latest 
         imagePullPolicy: IfNotPresent
         args:
         - server
@@ -102,7 +102,7 @@ spec:
         emptyDir: {}
       containers:
       - name: mc
-        image: minio/mc:latest
+        image: harbor-repo.vmware.com/dockerhub-proxy-cache/minio/mc:latest
         imagePullPolicy: IfNotPresent
         command:
         - /bin/sh

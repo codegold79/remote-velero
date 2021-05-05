@@ -18,9 +18,9 @@ package client
 
 import (
 	"context"
+	"net/http"
+	"net/url"
 	"os"
-
-	kbclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
@@ -29,6 +29,8 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	kbclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	velerov1api "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	clientset "github.com/vmware-tanzu/velero/pkg/generated/clientset/versioned"
@@ -97,6 +99,11 @@ type Factory interface {
 
 	// Namespace returns the namespace which the Factory will create clients for.
 	Namespace() string
+
+	// HttpProxy...
+	HttpProxy() string
+	// HttpsProxy...
+	HttpsProxy() string
 }
 
 type factory struct {
@@ -109,6 +116,8 @@ type factory struct {
 	namespace       string
 	clientQPS       float32
 	clientBurst     int
+	httpsProxy      string
+	httpProxy       string
 }
 
 // NewFactory returns a Factory.
@@ -132,6 +141,9 @@ func NewFactory(baseName string, config VeleroConfig) Factory {
 	f.flags.StringVar(&f.kubeconfig, "kubeconfig", "", "Path to the kubeconfig file to use to talk to the Kubernetes apiserver. If unset, try the environment variable KUBECONFIG, as well as in-cluster configuration")
 	f.flags.StringVarP(&f.namespace, "namespace", "n", f.namespace, "The namespace in which Velero should operate")
 	f.flags.StringVar(&f.kubecontext, "kubecontext", "", "The context to use to talk to the Kubernetes apiserver. If unset defaults to whatever your current-context is (kubectl config current-context)")
+	f.flags.StringVar(&f.httpsProxy, "httpsproxy", f.httpsProxy, "The proxy to use for https connections")
+	// TODO: httpproxy is a flag, but is not currently used.
+	f.flags.StringVar(&f.httpProxy, "httpproxy", f.httpProxy, "The proxy to use for http connections")
 
 	return f
 }
@@ -145,8 +157,10 @@ func (f *factory) ClientConfig() (*rest.Config, error) {
 }
 
 type serviceAcctCreds struct {
-	host    string
-	saToken string
+	host       string
+	saToken    string
+	kubeconfig string
+	httpsProxy string
 }
 
 // SourceClientConfig will return return a rest config built using the
@@ -175,13 +189,15 @@ func (f *factory) SourceClientConfig() (*rest.Config, error) {
 	if (srcCreds != serviceAcctCreds{}) {
 		f.srcClusterHost = srcCreds.host
 
-		return &rest.Config{
-			Host:            srcCreds.host,
-			BearerToken:     srcCreds.saToken,
-			TLSClientConfig: rest.TLSClientConfig{Insecure: true},
-			Burst:           1000,
-			QPS:             100,
-		}, nil
+		// Use kubeconfig if provided. Kubeconfig must provide TLS certificate
+		// data.
+		if srcCreds.kubeconfig != "" {
+			return f.restConfigWithKubeConfig(srcCreds)
+		}
+
+		// Passing in the SA token assumes TLS insecure is true. Only used if
+		// kubeconfig has not been provided.
+		return f.restConfigWithSAToken(srcCreds)
 	}
 
 	// No service account credentials were found for source cluster in secret.
@@ -215,18 +231,57 @@ func (f *factory) DestinationClientConfig() (*rest.Config, error) {
 	if (destCreds != serviceAcctCreds{}) {
 		f.destClusterHost = destCreds.host
 
-		return &rest.Config{
-			Host:            destCreds.host,
-			BearerToken:     destCreds.saToken,
-			TLSClientConfig: rest.TLSClientConfig{Insecure: true},
-			Burst:           1000,
-			QPS:             100,
-		}, nil
+		// Use kubeconfig if provided. Kubeconfig must provide TLS certificate
+		// data.
+		if destCreds.kubeconfig != "" {
+			return f.restConfigWithKubeConfig(destCreds)
+		}
+
+		// Passing in the SA token assumes TLS insecure is true. Only used if
+		// kubeconfig has not been provided.
+		return f.restConfigWithSAToken(destCreds)
 	}
 
 	// No service account credentials were found for source cluster in secret.
 	// Use local cluster kubecontext.
 	return Config(f.kubeconfig, f.kubecontext, f.baseName, f.clientQPS, f.clientBurst)
+}
+
+func (f *factory) restConfigWithSAToken(creds serviceAcctCreds) (*rest.Config, error) {
+	config := rest.Config{
+		Host:            creds.host,
+		BearerToken:     creds.saToken,
+		TLSClientConfig: rest.TLSClientConfig{Insecure: true},
+		Burst:           1000,
+		QPS:             100,
+	}
+
+	if f.httpsProxy != "" {
+		setTransportProxy(&config, f.httpsProxy)
+	}
+
+	return &config, nil
+}
+
+func (f *factory) restConfigWithKubeConfig(creds serviceAcctCreds) (*rest.Config, error) {
+	config, err := clientcmd.RESTConfigFromKubeConfig([]byte(creds.kubeconfig))
+	if err != nil {
+		return nil, err
+	}
+
+	if f.httpsProxy != "" {
+		setTransportProxy(config, f.httpsProxy)
+	}
+	return config, nil
+}
+
+func setTransportProxy(config *rest.Config, proxy string) {
+	config.Wrap(func(rt http.RoundTripper) http.RoundTripper {
+		transport := rt.(*http.Transport)
+		proxyURL, _ := url.Parse(proxy)
+		transport.Proxy = http.ProxyURL(proxyURL)
+		return transport
+	})
 }
 
 func (f *factory) Client() (clientset.Interface, error) {
@@ -403,13 +458,30 @@ func (f *factory) serviceAcctCredsFromSecret(secretName, secretNS string) (servi
 	for _, item := range secrets.Items {
 		if item.Name == secretName {
 			saCreds = serviceAcctCreds{
-				host:    string(item.Data["host"]),
-				saToken: string(item.Data["sa-token"]),
+				host:       string(item.Data["host"]),
+				saToken:    string(item.Data["sa-token"]),
+				kubeconfig: string(item.Data["kubeconfig"]),
+				httpsProxy: string(item.Data["https_proxy"]),
 			}
+
+			if f.httpsProxy == "" && saCreds.httpsProxy != "" {
+				f.httpsProxy = saCreds.httpsProxy
+			}
+
 			return saCreds, nil
 		}
 	}
 
 	// No service account credentials for remote cluster found in secret.
 	return serviceAcctCreds{}, nil
+}
+
+// HttpProxy is a getter for HTTP Proxy address.
+func (f *factory) HttpProxy() string {
+	return f.httpProxy
+}
+
+// HttpsProxy is a getter for HTTPS Proxy address.
+func (f *factory) HttpsProxy() string {
+	return f.httpsProxy
 }

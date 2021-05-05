@@ -228,6 +228,8 @@ type VeleroOptions struct {
 	CACertData                        []byte
 	Features                          []string
 	DefaultVolumesToRestic            bool
+	HttpsProxy                        string
+	HttpProxy                         string
 }
 
 func AllCRDs() *unstructured.UnstructuredList {
@@ -297,6 +299,14 @@ func AllResources(o *VeleroOptions) (*unstructured.UnstructuredList, error) {
 
 	if o.DefaultVolumesToRestic {
 		deployOpts = append(deployOpts, WithDefaultVolumesToRestic())
+	}
+
+	if o.HttpsProxy != "" {
+		deployOpts = append(deployOpts, WithHttpsProxy(o.HttpsProxy))
+	}
+
+	if o.HttpProxy != "" {
+		deployOpts = append(deployOpts, WithHttpProxy(o.HttpProxy))
 	}
 
 	deploy := Deployment(o.Namespace, deployOpts...)
