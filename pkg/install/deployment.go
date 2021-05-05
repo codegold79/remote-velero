@@ -41,6 +41,8 @@ type podTemplateConfig struct {
 	plugins                           []string
 	features                          []string
 	defaultVolumesToRestic            bool
+	httpsProxy                        string
+	httpProxy                         string
 }
 
 func WithImage(image string) podTemplateOption {
@@ -114,6 +116,18 @@ func WithDefaultVolumesToRestic() podTemplateOption {
 	}
 }
 
+func WithHttpsProxy(proxy string) podTemplateOption {
+	return func(c *podTemplateConfig) {
+		c.httpsProxy = proxy
+	}
+}
+
+func WithHttpProxy(proxy string) podTemplateOption {
+	return func(c *podTemplateConfig) {
+		c.httpProxy = proxy
+	}
+}
+
 func Deployment(namespace string, opts ...podTemplateOption) *appsv1.Deployment {
 	// TODO: Add support for server args
 	c := &podTemplateConfig{
@@ -138,6 +152,14 @@ func Deployment(namespace string, opts ...podTemplateOption) *appsv1.Deployment 
 
 	if c.defaultVolumesToRestic {
 		args = append(args, "--default-volumes-to-restic=true")
+	}
+
+	if c.httpsProxy != "" {
+		args = append(args, "--httpsproxy="+c.httpsProxy)
+	}
+
+	if c.httpProxy != "" {
+		args = append(args, "--httpproxy="+c.httpProxy)
 	}
 
 	containerLabels := Labels()
