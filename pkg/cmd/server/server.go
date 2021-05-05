@@ -253,6 +253,9 @@ type server struct {
 	config                              serverConfig
 	mgr                                 manager.Manager
 	credentialFileStore                 credentials.FileStore
+
+	httpsProxy string
+	httpProxy  string
 }
 
 func newServer(f client.Factory, config serverConfig, logger *logrus.Logger) (*server, error) {
@@ -387,6 +390,8 @@ func newServer(f client.Factory, config serverConfig, logger *logrus.Logger) (*s
 		config:                              config,
 		mgr:                                 mgr,
 		credentialFileStore:                 credentialFileStore,
+		httpsProxy:                          f.HttpsProxy(),
+		httpProxy:                           f.HttpProxy(),
 	}
 
 	return s, nil
@@ -404,6 +409,19 @@ func (s *server) run() error {
 	} else {
 		s.logger.Infof("Server is using current kubectx for source.")
 	}
+
+	if s.httpsProxy != "" {
+		s.logger.Infof("Server is using https_proxy at %s.", s.httpsProxy)
+	} else {
+		s.logger.Infof("Server is using no https_proxy.")
+	}
+
+	// TODO: http_proxy is accepted via flag, but not yet implemented.
+	// if s.httpProxy != "" {
+	// 	s.logger.Infof("Server is using http_proxy at %s.", s.httpProxy)
+	// } else {
+	// 	s.logger.Infof("Server is using no http_proxy.")
+	// }
 
 	s.logger.Infof("Server is using namespace %s.", s.namespace)
 

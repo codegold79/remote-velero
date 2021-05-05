@@ -71,6 +71,8 @@ type InstallOptions struct {
 	CACertFile                        string
 	Features                          string
 	DefaultVolumesToRestic            bool
+	HttpsProxy                        string
+	HttpProxy                         string
 }
 
 // BindFlags adds command line values to the options struct.
@@ -187,6 +189,8 @@ func (o *InstallOptions) AsVeleroOptions() (*install.VeleroOptions, error) {
 		CACertData:                        caCertData,
 		Features:                          strings.Split(o.Features, ","),
 		DefaultVolumesToRestic:            o.DefaultVolumesToRestic,
+		HttpsProxy:                        o.HttpsProxy,
+		HttpProxy:                         o.HttpProxy,
 	}, nil
 }
 
@@ -247,6 +251,15 @@ This is useful as a starting point for more customized installations.
 // Run executes a command in the context of the provided arguments.
 func (o *InstallOptions) Run(c *cobra.Command, f client.Factory) error {
 	var resources *unstructured.UnstructuredList
+
+	if f.HttpProxy() != "" {
+		o.HttpProxy = f.HttpProxy()
+	}
+
+	if f.HttpsProxy() != "" {
+		o.HttpsProxy = f.HttpsProxy()
+	}
+
 	if o.CRDsOnly {
 		resources = install.AllCRDs()
 	} else {
