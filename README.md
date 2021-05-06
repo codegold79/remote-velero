@@ -156,10 +156,10 @@ Instructions are very similar to Option 1, one velero for two remote clusters. S
         namespace: <namespace where Velero is installed>
         type: Opaque
         data:
-        host: <base64 encoded host URL>
-        sa-token: <base64 encoded service account token here>
-        kubeconfig: <base64 encoded kubeconfig file contents here>
-        https_proxy: <base64 encoded https proxy URL here>
+          host: <base64 encoded host URL>
+          sa-token: <base64 encoded service account token here>
+          kubeconfig: <base64 encoded kubeconfig file contents here>
+          https_proxy: <base64 encoded https proxy URL here>
         ```
 
 1. Install Remote Velero in Every Namespace
