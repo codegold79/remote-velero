@@ -74,7 +74,7 @@ func newPodBackupItemAction(logger logrus.FieldLogger) (interface{}, error) {
 func newServiceAccountBackupItemAction(f client.Factory) veleroplugin.HandlerInitializer {
 	return func(logger logrus.FieldLogger) (interface{}, error) {
 		// TODO(ncdc): consider a k8s style WantsKubernetesClientSet initialization approach
-		clientset, err := f.KubeClient()
+		clientset, err := f.SourceKubeClient()
 		if err != nil {
 			return nil, err
 		}
@@ -98,7 +98,7 @@ func newServiceAccountBackupItemAction(f client.Factory) veleroplugin.HandlerIni
 
 func newRemapCRDVersionAction(f client.Factory) veleroplugin.HandlerInitializer {
 	return func(logger logrus.FieldLogger) (interface{}, error) {
-		config, err := f.ClientConfig()
+		config, err := f.SourceClientConfig()
 		if err != nil {
 			return nil, err
 		}
@@ -126,12 +126,12 @@ func newInitRestoreHookPodAction(logger logrus.FieldLogger) (interface{}, error)
 
 func newResticRestoreItemAction(f client.Factory) veleroplugin.HandlerInitializer {
 	return func(logger logrus.FieldLogger) (interface{}, error) {
-		client, err := f.KubeClient()
+		client, err := f.DestinationKubeClient()
 		if err != nil {
 			return nil, err
 		}
 
-		veleroClient, err := f.Client()
+		veleroClient, err := f.DestinationClient()
 		if err != nil {
 			return nil, err
 		}
@@ -162,7 +162,7 @@ func newCRDV1PreserveUnknownFieldsItemAction(logger logrus.FieldLogger) (interfa
 
 func newChangeStorageClassRestoreItemAction(f client.Factory) veleroplugin.HandlerInitializer {
 	return func(logger logrus.FieldLogger) (interface{}, error) {
-		client, err := f.KubeClient()
+		client, err := f.DestinationKubeClient()
 		if err != nil {
 			return nil, err
 		}
@@ -185,7 +185,7 @@ func newClusterRoleBindingItemAction(logger logrus.FieldLogger) (interface{}, er
 
 func newChangePVCNodeSelectorItemAction(f client.Factory) veleroplugin.HandlerInitializer {
 	return func(logger logrus.FieldLogger) (interface{}, error) {
-		client, err := f.KubeClient()
+		client, err := f.DestinationKubeClient()
 		if err != nil {
 			return nil, err
 		}
