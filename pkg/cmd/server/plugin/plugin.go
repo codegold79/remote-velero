@@ -126,12 +126,12 @@ func newInitRestoreHookPodAction(logger logrus.FieldLogger) (interface{}, error)
 
 func newResticRestoreItemAction(f client.Factory) veleroplugin.HandlerInitializer {
 	return func(logger logrus.FieldLogger) (interface{}, error) {
-		client, err := f.DestinationKubeClient()
+		client, err := f.KubeClient()
 		if err != nil {
 			return nil, err
 		}
 
-		veleroClient, err := f.DestinationClient()
+		veleroClient, err := f.Client()
 		if err != nil {
 			return nil, err
 		}
