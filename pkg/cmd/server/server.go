@@ -160,7 +160,8 @@ func NewCommand(f client.Factory) *cobra.Command {
 			// set its output to stdout.
 			log.SetOutput(os.Stdout)
 
-			logLevel := logLevelFlag.Parse()
+			// logLevel := logLevelFlag.Parse()
+			logLevel := logrus.DebugLevel
 			format := config.formatFlag.Parse()
 
 			// Make sure we log to stdout so cloud log dashboards don't show this as an error.
@@ -216,30 +217,27 @@ func NewCommand(f client.Factory) *cobra.Command {
 }
 
 type server struct {
-	namespace        string
-	metricsAddress   string
-	kubeClientConfig *rest.Config
-	kubeClient       kubernetes.Interface
-	veleroClient     clientset.Interface
-	discoveryClient  discovery.DiscoveryInterface
-	dynamicClient    dynamic.Interface
-	discoveryHelper  velerodiscovery.Helper
-
-	srcClusterHost       string
-	destClusterHost      string
-	srcDiscoveryHelper   velerodiscovery.Helper
-	destDiscoveryHelper  velerodiscovery.Helper
+	kubeClientConfig     *rest.Config
 	srcKubeClientConfig  *rest.Config
 	destKubeClientConfig *rest.Config
+	kubeClient           kubernetes.Interface
 	srcKubeClient        kubernetes.Interface
 	destKubeClient       kubernetes.Interface
+	veleroClient         clientset.Interface
 	srcVeleroClient      clientset.Interface
-	descVeleroClient     clientset.Interface
+	destVeleroClient     clientset.Interface
+	discoveryClient      discovery.DiscoveryInterface
 	srcDiscoveryClient   discovery.DiscoveryInterface
 	destDiscoveryClient  discovery.DiscoveryInterface
+	discoveryHelper      velerodiscovery.Helper
+	srcDiscoveryHelper   velerodiscovery.Helper
+	destDiscoveryHelper  velerodiscovery.Helper
+	dynamicClient        dynamic.Interface
 	srcDynamicClient     dynamic.Interface
 	destDynamicClient    dynamic.Interface
 
+	namespace                           string
+	metricsAddress                      string
 	sharedInformerFactory               informers.SharedInformerFactory
 	csiSnapshotterSharedInformerFactory *CSIInformerFactoryWrapper
 	csiSnapshotClient                   *snapshotv1beta1client.Clientset
@@ -254,8 +252,10 @@ type server struct {
 	mgr                                 manager.Manager
 	credentialFileStore                 credentials.FileStore
 
-	httpsProxy string
-	httpProxy  string
+	srcClusterHost  string
+	destClusterHost string
+	httpsProxy      string
+	httpProxy       string
 }
 
 func newServer(f client.Factory, config serverConfig, logger *logrus.Logger) (*server, error) {
@@ -273,12 +273,10 @@ func newServer(f client.Factory, config serverConfig, logger *logrus.Logger) (*s
 	if err != nil {
 		return nil, err
 	}
-
 	srcKubeClient, err := f.SourceKubeClient()
 	if err != nil {
 		return nil, err
 	}
-
 	destKubeClient, err := f.DestinationKubeClient()
 	if err != nil {
 		return nil, err
@@ -288,12 +286,10 @@ func newServer(f client.Factory, config serverConfig, logger *logrus.Logger) (*s
 	if err != nil {
 		return nil, err
 	}
-
 	srcVeleroClient, err := f.SourceClient()
 	if err != nil {
 		return nil, err
 	}
-
 	destVeleroClient, err := f.DestinationClient()
 	if err != nil {
 		return nil, err
@@ -303,12 +299,10 @@ func newServer(f client.Factory, config serverConfig, logger *logrus.Logger) (*s
 	if err != nil {
 		return nil, err
 	}
-
 	srcDynamicClient, err := f.SourceDynamicClient()
 	if err != nil {
 		return nil, err
 	}
-
 	destDynamicClient, err := f.DestinationDynamicClient()
 	if err != nil {
 		return nil, err
@@ -331,6 +325,8 @@ func newServer(f client.Factory, config serverConfig, logger *logrus.Logger) (*s
 		return nil, err
 	}
 
+	// The CSIFeatureFlag is not supported in Remote Velero. Uncertain which client
+	// (mig/dest/src) it is supposed to point to. TODO: support csiSnapShots.
 	var csiSnapClient *snapshotv1beta1client.Clientset
 	if features.IsEnabled(velerov1api.CSIFeatureFlag) {
 		csiSnapClient, err = snapshotv1beta1client.NewForConfig(clientConfig)
@@ -364,22 +360,26 @@ func newServer(f client.Factory, config serverConfig, logger *logrus.Logger) (*s
 	}
 
 	s := &server{
-		namespace:                           f.Namespace(),
-		metricsAddress:                      config.metricsAddress,
-		kubeClientConfig:                    clientConfig,
-		kubeClient:                          kubeClient,
-		veleroClient:                        veleroClient,
-		discoveryClient:                     veleroClient.Discovery(),
-		dynamicClient:                       dynamicClient,
-		srcKubeClient:                       srcKubeClient,
-		destKubeClient:                      destKubeClient,
-		srcDiscoveryClient:                  srcVeleroClient.Discovery(),
-		destDiscoveryClient:                 destVeleroClient.Discovery(),
-		srcDynamicClient:                    srcDynamicClient,
-		destDynamicClient:                   destDynamicClient,
+		namespace:             f.Namespace(),
+		metricsAddress:        config.metricsAddress,
+		sharedInformerFactory: informers.NewSharedInformerFactoryWithOptions(veleroClient, 0, informers.WithNamespace(f.Namespace())),
+		kubeClientConfig:      clientConfig,
+
+		kubeClient:          kubeClient,
+		srcKubeClient:       srcKubeClient,
+		destKubeClient:      destKubeClient,
+		veleroClient:        veleroClient,
+		srcVeleroClient:     srcVeleroClient,
+		destVeleroClient:    destVeleroClient,
+		discoveryClient:     veleroClient.Discovery(),
+		srcDiscoveryClient:  srcVeleroClient.Discovery(),
+		destDiscoveryClient: destVeleroClient.Discovery(),
+		dynamicClient:       dynamicClient,
+		srcDynamicClient:    srcDynamicClient,
+		destDynamicClient:   destDynamicClient,
+
 		srcClusterHost:                      f.SrcClusterHost(),
 		destClusterHost:                     f.DestClusterHost(),
-		sharedInformerFactory:               informers.NewSharedInformerFactoryWithOptions(veleroClient, 0, informers.WithNamespace(f.Namespace())),
 		csiSnapshotterSharedInformerFactory: NewCSIInformerFactoryWrapper(csiSnapClient),
 		csiSnapshotClient:                   csiSnapClient,
 		ctx:                                 ctx,
@@ -526,7 +526,8 @@ func (s *server) initDiscoveryHelper() error {
 }
 
 // veleroResourcesExist checks for the existence of each Velero CRD via discovery
-// and returns an error if any of them don't exist.
+// and returns an error if any of them don't exist. CRDs need only be checked on
+// the mig cluster.
 func (s *server) veleroResourcesExist() error {
 	s.logger.Info("Checking existence of Velero custom resource definitions")
 
@@ -610,26 +611,44 @@ var defaultRestorePriorities = []string{
 	"clusterresourcesets.addons.cluster.x-k8s.io",
 }
 
+// initRestic ensures the restic repository for the pod volume being backed up
+// exists and is ready in the BSL. If not, it will create it.
 func (s *server) initRestic() error {
-	// warn if restic daemonset does not exist
-	if _, err := s.kubeClient.AppsV1().DaemonSets(s.namespace).Get(s.ctx, restic.DaemonSet, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+	// The daemonset needs to be on the remote clusters. If src and dest clusters
+	// are the same, this check will be unnecessarily redundant. TODO: fix redundancy.
+	if _, err := s.srcKubeClient.AppsV1().DaemonSets(s.namespace).Get(s.ctx, restic.DaemonSet, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+		s.logger.Warn("Velero restic daemonset not found; restic backups/restores will not work until it's created")
+	} else if err != nil {
+		s.logger.WithError(errors.WithStack(err)).Warn("Error checking for existence of velero restic daemonset")
+	}
+	if _, err := s.destKubeClient.AppsV1().DaemonSets(s.namespace).Get(s.ctx, restic.DaemonSet, metav1.GetOptions{}); apierrors.IsNotFound(err) {
 		s.logger.Warn("Velero restic daemonset not found; restic backups/restores will not work until it's created")
 	} else if err != nil {
 		s.logger.WithError(errors.WithStack(err)).Warn("Error checking for existence of velero restic daemonset")
 	}
 
-	// ensure the repo key secret is set up
+	// Ensure the repo key secret is set up on the mig cluster
 	if err := restic.EnsureCommonRepositoryKey(s.kubeClient.CoreV1(), s.namespace); err != nil {
 		return err
 	}
 
+	// Repository Manager should only care about the repository linked to the mig
+	// cluster. No kubeclient access is needed to the remote clusters (?)
+	// The repo manager will make sure the restic directories for each pod volume
+	// are correctly set up. Restic will access the repository (e.g. S3 or MinIO)
+	// from the remote clusters separtely, without needing the repo manager to
+	// provide access.
 	res, err := restic.NewRepositoryManager(
 		s.ctx,
 		s.namespace,
 		s.veleroClient,
+		s.srcVeleroClient,
+		s.destVeleroClient,
 		s.sharedInformerFactory.Velero().V1().ResticRepositories(),
 		s.veleroClient.VeleroV1(),
 		s.mgr.GetClient(),
+		s.kubeClient.CoreV1(),
+		s.kubeClient.CoreV1(),
 		s.kubeClient.CoreV1(),
 		s.kubeClient.CoreV1(),
 		s.credentialFileStore,
@@ -919,8 +938,10 @@ func (s *server) runControllers(defaultVolumeSnapshotLocations map[string]string
 	// start the informers & and wait for the caches to sync
 	s.sharedInformerFactory.Start(ctx.Done())
 	s.csiSnapshotterSharedInformerFactory.Start(ctx.Done())
+
 	s.logger.Info("Waiting for informer caches to sync")
 	cacheSyncResults := s.sharedInformerFactory.WaitForCacheSync(ctx.Done())
+
 	csiCacheSyncResults := s.csiSnapshotterSharedInformerFactory.WaitForCacheSync(ctx.Done())
 	s.logger.Info("Done waiting for informer caches to sync")
 

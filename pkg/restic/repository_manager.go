@@ -82,6 +82,8 @@ type RestorerFactory interface {
 type repositoryManager struct {
 	namespace            string
 	veleroClient         clientset.Interface
+	srcVeleroClient      clientset.Interface
+	destVeleroClient     clientset.Interface
 	repoLister           velerov1listers.ResticRepositoryLister
 	repoInformerSynced   cache.InformerSynced
 	kbClient             kbclient.Client
@@ -90,8 +92,10 @@ type repositoryManager struct {
 	repoEnsurer          *repositoryEnsurer
 	fileSystem           filesystem.Interface
 	ctx                  context.Context
-	pvcClient            corev1client.PersistentVolumeClaimsGetter
-	pvClient             corev1client.PersistentVolumesGetter
+	srcPvcClient         corev1client.PersistentVolumeClaimsGetter
+	destPvcClient        corev1client.PersistentVolumeClaimsGetter
+	srcPvClient          corev1client.PersistentVolumesGetter
+	destPvClient         corev1client.PersistentVolumesGetter
 	credentialsFileStore credentials.FileStore
 }
 
@@ -100,22 +104,30 @@ func NewRepositoryManager(
 	ctx context.Context,
 	namespace string,
 	veleroClient clientset.Interface,
+	srcVeleroClient clientset.Interface,
+	destVeleroClient clientset.Interface,
 	repoInformer velerov1informers.ResticRepositoryInformer,
 	repoClient velerov1client.ResticRepositoriesGetter,
 	kbClient kbclient.Client,
-	pvcClient corev1client.PersistentVolumeClaimsGetter,
-	pvClient corev1client.PersistentVolumesGetter,
+	srcPvcClient corev1client.PersistentVolumeClaimsGetter,
+	destPvcClient corev1client.PersistentVolumeClaimsGetter,
+	srcPvClient corev1client.PersistentVolumesGetter,
+	destPvClient corev1client.PersistentVolumesGetter,
 	credentialFileStore credentials.FileStore,
 	log logrus.FieldLogger,
 ) (RepositoryManager, error) {
 	rm := &repositoryManager{
 		namespace:            namespace,
 		veleroClient:         veleroClient,
+		srcVeleroClient:      srcVeleroClient,
+		destVeleroClient:     destVeleroClient,
 		repoLister:           repoInformer.Lister(),
 		repoInformerSynced:   repoInformer.Informer().HasSynced,
 		kbClient:             kbClient,
-		pvcClient:            pvcClient,
-		pvClient:             pvClient,
+		srcPvcClient:         srcPvcClient,
+		destPvcClient:        destPvcClient,
+		srcPvClient:          srcPvClient,
+		destPvClient:         destPvClient,
 		credentialsFileStore: credentialFileStore,
 		log:                  log,
 		ctx:                  ctx,
@@ -130,7 +142,7 @@ func NewRepositoryManager(
 
 func (rm *repositoryManager) NewBackupper(ctx context.Context, backup *velerov1api.Backup) (Backupper, error) {
 	informer := velerov1informers.NewFilteredPodVolumeBackupInformer(
-		rm.veleroClient,
+		rm.srcVeleroClient,
 		backup.Namespace,
 		0,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
@@ -139,7 +151,15 @@ func (rm *repositoryManager) NewBackupper(ctx context.Context, backup *velerov1a
 		},
 	)
 
-	b := newBackupper(ctx, rm, rm.repoEnsurer, informer, rm.pvcClient, rm.pvClient, rm.log)
+	b := newBackupper(
+		ctx,
+		rm,
+		rm.repoEnsurer,
+		informer,
+		rm.srcPvcClient,
+		rm.srcPvClient,
+		rm.log,
+	)
 
 	go informer.Run(ctx.Done())
 	if !cache.WaitForCacheSync(ctx.Done(), informer.HasSynced, rm.repoInformerSynced) {
@@ -151,7 +171,7 @@ func (rm *repositoryManager) NewBackupper(ctx context.Context, backup *velerov1a
 
 func (rm *repositoryManager) NewRestorer(ctx context.Context, restore *velerov1api.Restore) (Restorer, error) {
 	informer := velerov1informers.NewFilteredPodVolumeRestoreInformer(
-		rm.veleroClient,
+		rm.destVeleroClient,
 		restore.Namespace,
 		0,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
@@ -160,7 +180,14 @@ func (rm *repositoryManager) NewRestorer(ctx context.Context, restore *velerov1a
 		},
 	)
 
-	r := newRestorer(ctx, rm, rm.repoEnsurer, informer, rm.pvcClient, rm.log)
+	r := newRestorer(
+		ctx,
+		rm,
+		rm.repoEnsurer,
+		informer,
+		rm.destPvcClient,
+		rm.log,
+	)
 
 	go informer.Run(ctx.Done())
 	if !cache.WaitForCacheSync(ctx.Done(), informer.HasSynced, rm.repoInformerSynced) {

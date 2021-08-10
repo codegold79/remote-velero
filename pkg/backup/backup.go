@@ -219,7 +219,7 @@ func (kb *kubernetesBackupper) Backup(log logrus.FieldLogger, backupRequest *Req
 	}
 
 	if kb.SrcClusterHost() != "" {
-		log.Info("Using source cluster at %s", kb.srcClusterHost)
+		log.Infof("Using source cluster at %s", kb.srcClusterHost)
 	} else {
 		log.Info("Using local cluster for source")
 	}

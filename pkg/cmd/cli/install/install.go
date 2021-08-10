@@ -158,11 +158,21 @@ func (o *InstallOptions) AsVeleroOptions() (*install.VeleroOptions, error) {
 			return nil, err
 		}
 	}
-	veleroPodResources, err := kubeutil.ParseResourceRequirements(o.VeleroPodCPURequest, o.VeleroPodMemRequest, o.VeleroPodCPULimit, o.VeleroPodMemLimit)
+	veleroPodResources, err := kubeutil.ParseResourceRequirements(
+		o.VeleroPodCPURequest,
+		o.VeleroPodMemRequest,
+		o.VeleroPodCPULimit,
+		o.VeleroPodMemLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
-	resticPodResources, err := kubeutil.ParseResourceRequirements(o.ResticPodCPURequest, o.ResticPodMemRequest, o.ResticPodCPULimit, o.ResticPodMemLimit)
+	resticPodResources, err := kubeutil.ParseResourceRequirements(
+		o.ResticPodCPURequest,
+		o.ResticPodMemRequest,
+		o.ResticPodCPULimit,
+		o.ResticPodMemLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

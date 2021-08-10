@@ -71,7 +71,7 @@ const (
 )
 
 func NewServerCommand(f client.Factory) *cobra.Command {
-	logLevelFlag := logging.LogLevelFlag(logrus.InfoLevel)
+	logLevelFlag := logging.LogLevelFlag(logrus.DebugLevel)
 	formatFlag := logging.NewFormatFlag()
 
 	command := &cobra.Command{
@@ -101,24 +101,31 @@ func NewServerCommand(f client.Factory) *cobra.Command {
 }
 
 type resticServer struct {
-	kubeClient            kubernetes.Interface
-	veleroClient          clientset.Interface
-	veleroInformerFactory informers.SharedInformerFactory
-	kubeInformerFactory   kubeinformers.SharedInformerFactory
-	podInformer           cache.SharedIndexInformer
-	logger                logrus.FieldLogger
-	ctx                   context.Context
-	cancelFunc            context.CancelFunc
-	fileSystem            filesystem.Interface
-	mgr                   manager.Manager
-	metrics               *metrics.ServerMetrics
-	metricsAddress        string
-	namespace             string
+	kubeClient              kubernetes.Interface
+	srcKubeClient           kubernetes.Interface
+	destKubeClient          kubernetes.Interface
+	veleroClient            clientset.Interface
+	veleroInformerFactory   informers.SharedInformerFactory
+	srcKubeInformerFactory  kubeinformers.SharedInformerFactory
+	destKubeInformerFactory kubeinformers.SharedInformerFactory
+	srcPodInformer          cache.SharedIndexInformer
+	destPodInformer         cache.SharedIndexInformer
+	logger                  logrus.FieldLogger
+	ctx                     context.Context
+	cancelFunc              context.CancelFunc
+	fileSystem              filesystem.Interface
+	mgr                     manager.Manager
+	metrics                 *metrics.ServerMetrics
+	metricsAddress          string
+	namespace               string
 }
 
 func newResticServer(logger logrus.FieldLogger, factory client.Factory, metricAddress string) (*resticServer, error) {
-
-	kubeClient, err := factory.KubeClient()
+	srcKubeClient, err := factory.SourceKubeClient()
+	if err != nil {
+		return nil, err
+	}
+	destKubeClient, err := factory.DestinationKubeClient()
 	if err != nil {
 		return nil, err
 	}
@@ -130,8 +137,17 @@ func newResticServer(logger logrus.FieldLogger, factory client.Factory, metricAd
 
 	// use a stand-alone pod informer because we want to use a field selector to
 	// filter to only pods scheduled on this node.
-	podInformer := corev1informers.NewFilteredPodInformer(
-		kubeClient,
+	srcPodInformer := corev1informers.NewFilteredPodInformer(
+		srcKubeClient,
+		metav1.NamespaceAll,
+		0,
+		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
+		func(opts *metav1.ListOptions) {
+			opts.FieldSelector = fmt.Sprintf("spec.nodeName=%s", os.Getenv("NODE_NAME"))
+		},
+	)
+	destPodInformer := corev1informers.NewFilteredPodInformer(
+		destKubeClient,
 		metav1.NamespaceAll,
 		0,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
@@ -159,18 +175,21 @@ func newResticServer(logger logrus.FieldLogger, factory client.Factory, metricAd
 	}
 
 	s := &resticServer{
-		kubeClient:            kubeClient,
-		veleroClient:          veleroClient,
-		veleroInformerFactory: informers.NewFilteredSharedInformerFactory(veleroClient, 0, factory.Namespace(), nil),
-		kubeInformerFactory:   kubeinformers.NewSharedInformerFactory(kubeClient, 0),
-		podInformer:           podInformer,
-		logger:                logger,
-		ctx:                   ctx,
-		cancelFunc:            cancelFunc,
-		fileSystem:            filesystem.NewFileSystem(),
-		mgr:                   mgr,
-		metricsAddress:        metricAddress,
-		namespace:             factory.Namespace(),
+		srcKubeClient:           srcKubeClient,
+		destKubeClient:          destKubeClient,
+		veleroClient:            veleroClient,
+		veleroInformerFactory:   informers.NewFilteredSharedInformerFactory(veleroClient, 0, factory.Namespace(), nil),
+		srcKubeInformerFactory:  kubeinformers.NewSharedInformerFactory(srcKubeClient, 0),
+		destKubeInformerFactory: kubeinformers.NewSharedInformerFactory(destKubeClient, 0),
+		srcPodInformer:          srcPodInformer,
+		destPodInformer:         destPodInformer,
+		logger:                  logger,
+		ctx:                     ctx,
+		cancelFunc:              cancelFunc,
+		fileSystem:              filesystem.NewFileSystem(),
+		mgr:                     mgr,
+		metricsAddress:          metricAddress,
+		namespace:               factory.Namespace(),
 	}
 
 	if err := s.validatePodVolumesHostPath(); err != nil {
@@ -207,34 +226,36 @@ func (s *resticServer) run() {
 		s.logger.Fatalf("Failed to create credentials file store: %v", err)
 	}
 
-	backupController := controller.NewPodVolumeBackupController(
+	pvbController := controller.NewPodVolumeBackupController(
 		s.logger,
 		s.veleroInformerFactory.Velero().V1().PodVolumeBackups(),
 		s.veleroClient.VeleroV1(),
-		s.podInformer,
-		s.kubeInformerFactory.Core().V1().PersistentVolumeClaims(),
-		s.kubeInformerFactory.Core().V1().PersistentVolumes(),
+		s.srcPodInformer,
+		s.srcKubeInformerFactory.Core().V1().PersistentVolumeClaims(),
+		s.srcKubeInformerFactory.Core().V1().PersistentVolumes(),
 		s.metrics,
 		s.mgr.GetClient(),
 		os.Getenv("NODE_NAME"),
 		credentialFileStore,
 	)
 
-	restoreController := controller.NewPodVolumeRestoreController(
+	pvrController := controller.NewPodVolumeRestoreController(
 		s.logger,
 		s.veleroInformerFactory.Velero().V1().PodVolumeRestores(),
 		s.veleroClient.VeleroV1(),
-		s.podInformer,
-		s.kubeInformerFactory.Core().V1().PersistentVolumeClaims(),
-		s.kubeInformerFactory.Core().V1().PersistentVolumes(),
+		s.destPodInformer,
+		s.destKubeInformerFactory.Core().V1().PersistentVolumeClaims(),
+		s.destKubeInformerFactory.Core().V1().PersistentVolumes(),
 		s.mgr.GetClient(),
 		os.Getenv("NODE_NAME"),
 		credentialFileStore,
 	)
 
 	go s.veleroInformerFactory.Start(s.ctx.Done())
-	go s.kubeInformerFactory.Start(s.ctx.Done())
-	go s.podInformer.Run(s.ctx.Done())
+	go s.srcKubeInformerFactory.Start(s.ctx.Done())
+	go s.destKubeInformerFactory.Start(s.ctx.Done())
+	go s.srcPodInformer.Run(s.ctx.Done())
+	go s.destPodInformer.Run(s.ctx.Done())
 
 	// TODO(2.0): presuming all controllers and resources are converted to runtime-controller
 	// by v2.0, the block from this line and including the `s.mgr.Start() will be
@@ -243,8 +264,8 @@ func (s *resticServer) run() {
 
 	// Adding the controllers to the manager will register them as a (runtime-controller) runnable,
 	// so the manager will ensure the cache is started and ready before all controller are started
-	s.mgr.Add(managercontroller.Runnable(backupController, 1))
-	s.mgr.Add(managercontroller.Runnable(restoreController, 1))
+	s.mgr.Add(managercontroller.Runnable(pvbController, 1))
+	s.mgr.Add(managercontroller.Runnable(pvrController, 1))
 
 	s.logger.Info("Controllers starting...")
 
@@ -269,7 +290,12 @@ func (s *resticServer) validatePodVolumesHostPath() error {
 		}
 	}
 
-	pods, err := s.kubeClient.CoreV1().Pods("").List(s.ctx, metav1.ListOptions{FieldSelector: fmt.Sprintf("spec.nodeName=%s,status.phase=Running", os.Getenv("NODE_NAME"))})
+	pods, err := s.srcKubeClient.CoreV1().Pods("").List(
+		s.ctx,
+		metav1.ListOptions{
+			FieldSelector: fmt.Sprintf("spec.nodeName=%s,status.phase=Running", os.Getenv("NODE_NAME")),
+		},
+	)
 	if err != nil {
 		return errors.WithStack(err)
 	}
