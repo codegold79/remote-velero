@@ -109,7 +109,7 @@ func installVeleroServer(io *cliinstall.InstallOptions) error {
 
 	errorMsg := "\n\nError installing Velero. Use `kubectl logs deploy/velero -n velero` to check the deploy logs"
 	resources := install.AllResources(vo)
-	err = install.Install(client.dynamicFactory, resources, os.Stdout)
+	err = install.Install(client.dynamicFactory, client.kubebuilder, resources, os.Stdout)
 	if err != nil {
 		return errors.Wrap(err, errorMsg)
 	}
@@ -251,24 +251,6 @@ func veleroBackupNamespace(ctx context.Context, veleroCLI string, veleroNamespac
 	return err
 }
 
-// veleroBackupExcludeNamespaces uses the veleroCLI to backup a namespace.
-func veleroBackupExcludeNamespaces(ctx context.Context, veleroCLI string, veleroNamespace string, backupName string, excludeNamespaces []string) error {
-	namespaces := strings.Join(excludeNamespaces, ",")
-	backupCmd := exec.CommandContext(ctx, veleroCLI, "--namespace", veleroNamespace, "create", "backup", backupName,
-		"--exclude-namespaces", namespaces,
-		"--default-volumes-to-restic", "--wait")
-	backupCmd.Stdout = os.Stdout
-	backupCmd.Stderr = os.Stderr
-	fmt.Printf("backup cmd =%v\n", backupCmd)
-	err := backupCmd.Run()
-	if err != nil {
-		return err
-	}
-	err = checkBackupPhase(ctx, veleroCLI, veleroNamespace, backupName, velerov1api.BackupPhaseCompleted)
-
-	return err
-}
-
 // veleroRestore uses the veleroCLI to restore from a Velero backup.
 func veleroRestore(ctx context.Context, veleroCLI string, veleroNamespace string, restoreName string, backupName string) error {
 	restoreCmd := exec.CommandContext(ctx, veleroCLI, "--namespace", veleroNamespace, "create", "restore", restoreName,
@@ -286,7 +268,7 @@ func veleroRestore(ctx context.Context, veleroCLI string, veleroNamespace string
 
 func veleroInstall(ctx context.Context, veleroImage string, veleroNamespace string, cloudProvider string, objectStoreProvider string, useVolumeSnapshots bool,
 	cloudCredentialsFile string, bslBucket string, bslPrefix string, bslConfig string, vslConfig string,
-	features string) error {
+	crdsVersion string, features string) error {
 
 	if cloudProvider != "kind" {
 		if objectStoreProvider != "" {
@@ -330,6 +312,7 @@ func veleroInstall(ctx context.Context, veleroImage string, veleroNamespace stri
 	}
 	veleroInstallOptions.UseRestic = !useVolumeSnapshots
 	veleroInstallOptions.Image = veleroImage
+	veleroInstallOptions.CRDsVersion = crdsVersion
 	veleroInstallOptions.Namespace = veleroNamespace
 
 	err = installVeleroServer(veleroInstallOptions)

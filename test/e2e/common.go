@@ -47,10 +47,6 @@ func createNamespace(ctx context.Context, client testClient, namespace string) e
 	return err
 }
 
-func getNamespace(ctx context.Context, client testClient, namespace string) (*corev1api.Namespace, error) {
-	return client.clientGo.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
-}
-
 // waitForNamespaceDeletion waits for namespace to be deleted.
 func waitForNamespaceDeletion(interval, timeout time.Duration, client testClient, ns string) error {
 	err := wait.PollImmediate(interval, timeout, func() (bool, error) {
